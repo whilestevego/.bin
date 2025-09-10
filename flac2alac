@@ -1,0 +1,25 @@
+# vim: set syntax=sh
+#!/usr/bin/env bash
+set -e
+
+convert_to_alac() {
+  flac="$1"
+  alac="${flac%.*}.m4a"
+
+  ffmpeg -v quiet -i "$flac" -c:a alac "$alac"
+}
+
+if [ $# -ne 1 ]; then
+  echo "usage: $0 dir"
+  echo "requirements: Mac OS and flac installed"
+  exit 1
+fi
+
+echo "💽 flac2alac 💽"
+for file in "$1"/**/*.flac; do
+  echo "📀 $file"
+  convert_to_alac "$file"
+done
+
+
+echo "🏁 Complete!"

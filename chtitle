@@ -1,0 +1,12 @@
+#!/bin/sh
+# chtitle
+#
+# Shane Celis <shane@gnufoo.org>
+
+if [ $# -eq 0 ] || [ "$1" == "-h" ]; then
+  echo "usage: title <string>" >&2
+  echo "sets the title for the terminal window" >&2
+  exit 2;
+fi
+title="$@";
+echo -ne "\033]0;"$@"\007"
