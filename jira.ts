@@ -250,6 +250,9 @@ ${style.heading("OPTIONS:")}
   ${style.info("--checkout")}             Checkout the git branch. If the branch doesn't exist, it will be created.
                          ${style.dim("(For: git-branch, create)")}
 
+  ${style.info("-s, --suffix=<suffix>")}  Provide a custom suffix for the branch name, overriding the ticket summary.
+                         ${style.dim("(For: git-branch, create)")}
+
   ${style.info("-o, --open")}             Open the ticket in the browser after creation.
                          ${style.dim("(For: create)")}
 
@@ -272,29 +275,40 @@ ${style.heading("GLOBAL OPTIONS:")}
 }
 
 /**
- * Generates a git-friendly branch name from a Jira issue, truncated to 255 characters.
- * @param issue - The Jira issue object.
- * @returns A formatted string for a git branch name (e.g., "PROJ-123-fix-the-bug").
+ * Normalizes a string to be git-friendly for a branch name.
+ * @param text - The text to normalize.
+ * @returns A normalized string.
  */
-function generateGitBranchName(issue: JiraIssue): string {
-  const key = issue.key
-  let summary = issue.fields.summary
+function normalizeForBranchName(text: string): string {
+  return text
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, "") // Remove non-alphanumeric, allowing spaces/hyphens
     .replace(/\s+/g, "-") // Replace spaces with a hyphen
     .replace(/-+/g, "-") // Replace multiple hyphens with one
+}
+
+/**
+ * Generates a git-friendly branch name from a Jira issue, truncated to 255 characters.
+ * @param issue - The Jira issue object.
+ * @param suffix - An optional suffix to use instead of the issue summary.
+ * @returns A formatted string for a git branch name (e.g., "PROJ-123-fix-the-bug").
+ */
+function generateGitBranchName(issue: JiraIssue, suffix?: string): string {
+  const key = issue.key
+  const content = suffix ? suffix : issue.fields.summary
+  let normalizedContent = normalizeForBranchName(content)
 
   const prefix = `${key}-`
   const maxLength = 255
 
-  let branchName = `${prefix}${summary}`
+  let branchName = `${prefix}${normalizedContent}`
 
   if (branchName.length > maxLength) {
     const availableLength = maxLength - prefix.length
-    summary = summary.substring(0, availableLength)
+    normalizedContent = normalizedContent.substring(0, availableLength)
   }
 
-  branchName = `${prefix}${summary}`.replace(/-$/, "") // Final cleanup
+  branchName = `${prefix}${normalizedContent}`.replace(/-$/, "") // Final cleanup
 
   return branchName
 }
@@ -395,9 +409,9 @@ async function openInBrowser(url: string) {
  */
 async function main() {
   const flags = parse(Deno.args, {
-    string: ["email", "token", "baseUrl", "id", "title", "project", "issuetype"],
+    string: ["email", "token", "baseUrl", "id", "title", "project", "issuetype", "suffix"],
     boolean: ["checkout", "interactive", "json", "plain", "open"],
-    alias: { t: "title", o: "open", p: "project" },
+    alias: { t: "title", o: "open", p: "project", s: "suffix" },
   })
 
   plainOutput = flags.plain
@@ -505,7 +519,7 @@ async function main() {
             updated: "", // not used by generateGitBranchName
           },
         }
-        const branchName = generateGitBranchName(tempIssue)
+        const branchName = generateGitBranchName(tempIssue, flags.suffix)
         await checkoutBranch(branchName)
       }
     }
@@ -613,7 +627,7 @@ async function main() {
     // --- Handle output ---
     if (ticket) {
       if (command === "git-branch") {
-        const branchName = generateGitBranchName(ticket)
+        const branchName = generateGitBranchName(ticket, flags.suffix)
         if (flags.checkout) {
           await checkoutBranch(branchName)
         } else {
