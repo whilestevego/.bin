@@ -145,14 +145,15 @@ class JiraClient {
   }
 
   async getTicketById(ticketId: string): Promise<JiraIssue | null> {
-    return await this.request<JiraIssue>(`/rest/api/3/issue/${ticketId}`, {
+    const endpoint = `/rest/api/3/issue/${ticketId}?fields=summary,updated`
+    return await this.request<JiraIssue>(endpoint, {
       errorMessage: `Error fetching ticket ${ticketId}`,
     })
   }
 
   async getAllAssignedTickets(): Promise<JiraIssue[] | null> {
     const jql = 'assignee = currentUser() AND status = "In Progress" ORDER BY updated DESC'
-    const endpoint = `/rest/api/3/search?jql=${encodeURIComponent(jql)}`
+    const endpoint = `/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&fields=summary,updated`
     const result = await this.request<JiraApiResponse>(endpoint, { errorMessage: "Error fetching assigned tickets" })
     return result ? result.issues : null
   }
