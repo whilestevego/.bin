@@ -307,32 +307,43 @@ async function checkoutBranch(branchName: string, verbose: boolean) {
   }
 }
 
-async function openInBrowser(url: string): Promise<void> {
+async function openInBrowser(webUrl: string, issueId: string): Promise<void> {
+    const desktopUrl = `linear://issue/${issueId}`;
+
     let command: string;
-    let args: string[];
+    let desktopArgs: string[];
+    let webArgs: string[];
 
     switch (Deno.build.os) {
         case "darwin":
             command = "open";
-            args = [url];
+            desktopArgs = [desktopUrl];
+            webArgs = [webUrl];
             break;
         case "windows":
             command = "cmd";
-            args = ["/c", "start", url];
+            desktopArgs = ["/c", "start", desktopUrl];
+            webArgs = ["/c", "start", webUrl];
             break;
         default:
             command = "xdg-open";
-            args = [url];
+            desktopArgs = [desktopUrl];
+            webArgs = [webUrl];
             break;
     }
 
-    const p = new Deno.Command(command, { args });
-    const { code, stderr } = await p.output();
+    const p = new Deno.Command(command, { args: desktopArgs });
+    const { code } = await p.output();
+
     if (code !== 0) {
-        console.error(`${style.error("❌ Error opening in browser:")} ${new TextDecoder().decode(stderr).trim()}`);
+        console.warn(style.warning("Could not open in Linear desktop app, falling back to browser."));
+        const webP = new Deno.Command(command, { args: webArgs });
+        const { code: webCode, stderr: webStderr } = await webP.output();
+        if (webCode !== 0) {
+            console.error(`${style.error("❌ Error opening in browser:")} ${new TextDecoder().decode(webStderr).trim()}`);
+        }
     }
 }
-
 async function main() {
   const argv = parse(Deno.args, {
     boolean: ["checkout", "verbose"],
@@ -453,7 +464,7 @@ async function main() {
 
         console.log(style.info(`🚀 Opening issue ${issueId} in your browser...`));
         const url = `https://linear.app/team/${LINEAR_TEAM_ID}/issue/${issueId}`;
-        await openInBrowser(url);
+        await openInBrowser(url, issueId);
         break;
       }
       case "update": {
@@ -495,4 +506,6 @@ async function main() {
   } catch (error) {
     console.error(style.error("❌ Error:"), error.message);
   }
-}main();
+}
+
+main();
