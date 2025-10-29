@@ -16,13 +16,13 @@
  *
  * Usage:
  * # Show help
- * jira.ts
+ * jira
  *
  * # Get information about the current user
- * jira.ts me
+ * jira me
  *
  * # Open ticket from current git branch in browser
- * jira.ts open
+ * jira open
  *
  * It is recommended to set the following environment variables:
  * JIRA_USER_EMAIL: Your Jira account email address.
@@ -228,7 +228,7 @@ ${style.bold("📋 Jira CLI Tool")}
 ${style.italic("A command-line interface to interact with Jira tickets.")}
 
 ${style.heading("USAGE:")}
-  ${style.info("jira.ts <command> [options]")}
+  ${style.info("jira <command> [options]")}
 
 ${style.heading("COMMANDS:")}
   ${style.info("ticket")}        Fetch details for a specific or the latest ticket.
