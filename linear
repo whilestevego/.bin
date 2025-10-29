@@ -1,0 +1,498 @@
+#!/usr/bin/env -S deno run --allow-net --allow-run --allow-env --allow-read
+
+import { parse } from "https://deno.land/std@0.140.0/flags/mod.ts";
+import * as colors from "https://deno.land/std@0.224.0/fmt/colors.ts";
+
+const style = {
+  bold: (str: string) => colors.bold(str),
+  italic: (str: string) => colors.italic(str),
+  error: (str: string) => colors.bold(colors.red(str)),
+  success: (str: string) => colors.bold(colors.green(str)),
+  info: (str: string) => colors.cyan(str),
+  warning: (str: string) => colors.yellow(str),
+  dim: (str: string) => colors.dim(str),
+  heading: (str: string) => colors.bold(colors.underline(colors.cyan(str))),
+};
+
+function showHelp() {
+  console.log(`
+${style.bold("📋 Linear CLI")}
+
+${style.italic("A command-line interface to interact with Linear issues.")}
+
+${style.heading("USAGE:")}
+  ${style.info("linear <command> [options]")}
+
+${style.heading("COMMANDS:")}
+  ${style.info("list")}              List your assigned issues.
+  ${style.info("me")}                Display information about the current user.
+  ${style.info("git-branch")}        Generate a git branch name from an issue.
+  ${style.info("open")}              Open an issue in the browser.
+  ${style.info("create")}            Create a new issue.
+  ${style.info("update")}            Update an issue's state.
+  ${style.info("help")}              Show this help message.
+
+${style.heading("OPTIONS:")}
+  ${style.info("-i, --id=<id>")}        Specify an issue ID (e.g., "TEAM-123").
+                       ${style.dim("(For: git-branch, open, update)")}
+  ${style.info("-s, --state=<state>")}  The state to update the issue to.
+                       ${style.dim("(For: update)")}
+  ${style.info("-t, --title=<title>")}  The title for the new issue.
+                       ${style.dim("(For: create)")}
+  ${style.info("-c, --checkout")}       Checkout the git branch.
+                       ${style.dim("(For: git-branch)")}
+  ${style.info("-v, --verbose")}        Enable verbose output.
+                       ${style.dim("(For: git-branch)")}
+
+${style.heading("ENVIRONMENT VARIABLES:")}
+  ${style.info("LINEAR_API_KEY")}    Your Linear API key.
+                    ${style.dim("To get an API key, go to https://linear.app/settings/api")}
+  ${style.info("LINEAR_TEAM_ID")}    Your Linear Team ID.
+                    ${style.dim("To get your Team ID, go to your team's page in Linear and get it from the URL (e.g. .../team/TEAM_ID/...).")}
+`);
+}
+
+interface LinearIssue {
+  id: string;
+  identifier: string;
+  title: string;
+  branchName: string;
+  state: {
+    id: string;
+    name: string;
+  };
+}
+
+interface LinearTeam {
+    id: string;
+    name: string;
+}
+
+interface LinearWorkflowState {
+    id: string;
+    name: string;
+}
+
+class LinearClient {
+  private readonly baseUrl = "https://api.linear.app/graphql";
+  private readonly headers: Record<string, string>;
+
+  constructor(apiKey: string) {
+    this.headers = {
+      "Authorization": apiKey,
+      "Content-Type": "application/json",
+    };
+  }
+
+  private async request<T>(query: string, variables?: Record<string, any>): Promise<T> {
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ query, variables }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Linear API request failed: ${response.statusText} - ${errorBody}`);
+    }
+
+    const json = await response.json();
+    if (json.errors) {
+      throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`);
+    }
+    return json.data;
+  }
+
+  async getSelf() {
+    const query = `
+      query Me {
+        viewer {
+          id
+          name
+          email
+        }
+      }
+    `;
+    return this.request<{ viewer: { id: string; name: string; email: string } }>(query);
+  }
+
+  async getIssue(id: string) {
+    const query = `
+      query Issue($id: String!) {
+        issue(id: $id) {
+          id
+          identifier
+          title
+          branchName
+          state {
+            id
+            name
+          }
+        }
+      }
+    `;
+    return this.request<{ issue: LinearIssue }>(query, { id });
+  }
+
+  async getAssignedIssues(userId: string) {
+    const query = `
+      query Issues($filter: IssueFilter) {
+        issues(filter: $filter) {
+          nodes {
+            id
+            identifier
+            title
+            branchName
+            state {
+              id
+              name
+            }
+          }
+        }
+      }
+    `;
+    const variables = {
+      filter: {
+        assignee: { id: { eq: userId } },
+        state: { name: { nin: ["Done", "Canceled"] } },
+      },
+    };
+    return this.request<{ issues: { nodes: LinearIssue[] } }>(query, variables);
+  }
+
+  async getLatestInProgressIssue(userId: string): Promise<LinearIssue | null> {
+    const query = `
+      query Issues($filter: IssueFilter, $orderBy: PaginationOrderBy) {
+        issues(first: 1, filter: $filter, orderBy: $orderBy) {
+          nodes {
+            id
+            identifier
+            title
+            branchName
+            state {
+              id
+              name
+            }
+          }
+        }
+      }
+    `;
+    const variables = {
+      filter: {
+        assignee: { id: { eq: userId } },
+        state: { name: { nin: ["Done", "Canceled"] } },
+      },
+      orderBy: "updatedAt",
+    };
+    const result = await this.request<{ issues: { nodes: LinearIssue[] } }>(query, variables);
+    return result.issues.nodes[0] || null;
+  }
+
+  async createIssue(title: string, teamId: string, assigneeId: string) {
+    const query = `
+      mutation CreateIssue($title: String!, $teamId: String!, $assigneeId: String!) {
+        issueCreate(input: { title: $title, teamId: $teamId, assigneeId: $assigneeId }) {
+          issue {
+            id
+            identifier
+            title
+            branchName
+          }
+        }
+      }
+    `;
+    const variables = { title, teamId, assigneeId };
+    return this.request<{ issueCreate: { issue: LinearIssue } }>(query, variables);
+  }
+
+  async getTeams() {
+    const query = `
+      query Teams {
+        teams {
+          nodes {
+            id
+            name
+          }
+        }
+      }
+    `;
+    return this.request<{ teams: { nodes: LinearTeam[] } }>(query);
+  }
+
+  async getWorkflowStates(teamId: string) {
+    const query = `
+      query WorkflowStates($teamId: String!) {
+        team(id: $teamId) {
+          states {
+            nodes {
+              id
+              name
+            }
+          }
+        }
+      }
+    `;
+    return this.request<{ team: { states: { nodes: LinearWorkflowState[] } } }>(query, { teamId });
+  }
+
+  async updateIssue(issueId: string, stateId: string) {
+    const query = `
+      mutation UpdateIssue($issueId: String!, $stateId: String!) {
+        issueUpdate(id: $issueId, input: { stateId: $stateId }) {
+          issue {
+            id
+            state {
+              id
+              name
+            }
+          }
+        }
+      }
+    `;
+    const variables = { issueId, stateId };
+    return this.request(query, variables);
+  }
+}
+
+function normalizeForBranchName(str: string): string {
+  let normalized = str.toLowerCase();
+  normalized = normalized.replace(/\s+/g, "-");
+  normalized = normalized.replace(/[^a-z0-9-]/g, "");
+  normalized = normalized.replace(/-+/g, "-");
+  normalized = normalized.replace(/^-+|-+$/g, "");
+  return normalized;
+}
+
+function generateGitBranchName(issue: LinearIssue): string {
+  const key = issue.identifier;
+  const content = issue.title;
+  let normalizedContent = normalizeForBranchName(content);
+
+  const prefix = `${key}`;
+  const maxLength = 80;
+
+  let branchName = `${prefix}-${normalizedContent}`;
+
+  const availableLength = maxLength - prefix.length - 1;
+  if (normalizedContent.length > availableLength) {
+    normalizedContent = normalizedContent.substring(0, availableLength);
+  }
+
+  branchName = `${prefix}-${normalizedContent}`;
+
+  return branchName;
+}
+
+async function checkoutBranch(branchName: string, verbose: boolean) {
+  // First, check if the branch exists
+  const checkCmd = new Deno.Command("git", { args: ["rev-parse", "--verify", branchName] });
+  const { code: checkCode } = await checkCmd.output();
+
+  const branchExists = checkCode === 0;
+
+  let gitCmd: Deno.Command;
+  if (branchExists) {
+    if (verbose) console.log(`✅ ${style.info(`Branch '${branchName}' already exists. Checking it out...`)}`);
+    gitCmd = new Deno.Command("git", { args: ["checkout", branchName] });
+  } else {
+    if (verbose) console.log(`✨ ${style.info(`Branch '${branchName}' does not exist. Creating and checking it out...`)}`);
+    gitCmd = new Deno.Command("git", { args: ["checkout", "-b", branchName] });
+  }
+
+  const { code, stderr } = await gitCmd.output();
+  if (code === 0) {
+    if (verbose) console.log(style.success(`✅ Successfully checked out branch: '${branchName}'`));
+  } else {
+    console.error(`${style.error("❌ Error checking out branch:")} ${new TextDecoder().decode(stderr).trim()}`);
+  }
+}
+
+async function openInBrowser(url: string): Promise<void> {
+    let command: string;
+    let args: string[];
+
+    switch (Deno.build.os) {
+        case "darwin":
+            command = "open";
+            args = [url];
+            break;
+        case "windows":
+            command = "cmd";
+            args = ["/c", "start", url];
+            break;
+        default:
+            command = "xdg-open";
+            args = [url];
+            break;
+    }
+
+    const p = new Deno.Command(command, { args });
+    const { code, stderr } = await p.output();
+    if (code !== 0) {
+        console.error(`${style.error("❌ Error opening in browser:")} ${new TextDecoder().decode(stderr).trim()}`);
+    }
+}
+
+async function main() {
+  const argv = parse(Deno.args, {
+    boolean: ["checkout", "verbose"],
+    string: ["id", "state", "title"],
+    alias: {
+      i: "id",
+      s: "state",
+      t: "title",
+      c: "checkout",
+      v: "verbose",
+    },
+  });
+
+  const command = argv._[0];
+
+  if (argv.help || argv.h || !command || command === "help") {
+    showHelp();
+    Deno.exit(0);
+  }
+
+  const LINEAR_API_KEY = Deno.env.get("LINEAR_API_KEY");
+  const LINEAR_TEAM_ID = Deno.env.get("LINEAR_TEAM_ID");
+
+  if (!LINEAR_API_KEY) {
+    console.error(style.error("❌ Error: Missing LINEAR_API_KEY environment variable.\n"));
+    showHelp();
+    Deno.exit(1);
+  }
+
+  if (!LINEAR_TEAM_ID) {
+      console.error(style.error("❌ Error: Missing LINEAR_TEAM_ID environment variable.\n"));
+      showHelp();
+      Deno.exit(1);
+  }
+
+  const client = new LinearClient(LINEAR_API_KEY);
+
+  try {
+    switch (command) {
+      case "list": {
+        const { viewer } = await client.getSelf();
+        const { issues } = await client.getAssignedIssues(viewer.id);
+        console.log(style.heading(`\n🚀 Assigned issues for ${viewer.name}:\n`));
+        if (issues.nodes.length === 0) {
+          console.log(style.info("✨ No assigned issues. You're all clear!"));
+        } else {
+          for (const issue of issues.nodes) {
+            console.log(`  ${style.bold(style.info(`[${issue.identifier}]`))} ${issue.title}`);
+          }
+        }
+        break;
+      }
+      case "me": {
+        const { viewer } = await client.getSelf();
+        console.log(`\n${style.bold("👤 Current User")}\n`);
+        console.log(`  ${style.info("Name:")}  ${viewer.name}`);
+        console.log(`  ${style.info("Email:")} ${viewer.email}`);
+        console.log(`  ${style.info("ID:")}    ${viewer.id}`);
+        break;
+      }
+      case "create": {
+        const title = argv.title || argv._[1];
+        if (!title) {
+          console.error(style.error("❌ Please provide a title for the issue using --title."));
+          Deno.exit(1);
+        }
+        const { viewer } = await client.getSelf();
+        const { issueCreate } = await client.createIssue(title, LINEAR_TEAM_ID, viewer.id);
+        console.log(style.success(`✅ Successfully created issue: [${issueCreate.issue.identifier}] ${issueCreate.issue.title}`));
+        break;
+      }
+      case "git-branch": {
+        const issueId = argv.id || argv._[1];
+        const verbose = argv.verbose;
+
+        let issue: LinearIssue | null;
+        if (issueId) {
+            const issueResult = await client.getIssue(issueId);
+            issue = issueResult.issue;
+        } else {
+            if (verbose) console.log(style.info("No issue ID provided, fetching your latest issue..."));
+            const { viewer } = await client.getSelf();
+            issue = await client.getLatestInProgressIssue(viewer.id);
+        }
+
+        if (!issue) {
+          console.error(style.error(`❌ Could not find an issue to operate on.`));
+          Deno.exit(1);
+        }
+
+        if (verbose) console.log(style.info(`\nOperating on issue: ${style.bold(`[${issue.identifier}]`)} ${issue.title}\n`));
+
+        const branchName = generateGitBranchName(issue);
+        console.log(branchName);
+
+        if (argv.checkout) {
+          await checkoutBranch(branchName, verbose);
+        }
+        break;
+      }
+      case "open": {
+        let issueId = argv.id || argv._[1];
+
+        if (!issueId) {
+            console.log(style.info("No issue ID provided, fetching your latest issue..."));
+            const { viewer } = await client.getSelf();
+            const issue = await client.getLatestInProgressIssue(viewer.id);
+            if (issue) {
+                issueId = issue.identifier;
+                console.log(style.info(`\nOperating on issue: ${style.bold(`[${issue.identifier}]`)} ${issue.title}\n`));
+            }
+        }
+
+        if (!issueId) {
+          console.error(style.error(`❌ Could not find an issue to operate on.`));
+          Deno.exit(1);
+        }
+
+        console.log(style.info(`🚀 Opening issue ${issueId} in your browser...`));
+        const url = `https://linear.app/team/${LINEAR_TEAM_ID}/issue/${issueId}`;
+        await openInBrowser(url);
+        break;
+      }
+      case "update": {
+        const issueId = argv.id || argv._[1];
+        if (!issueId) {
+          console.error(style.error("❌ Please provide an issue ID using --id."));
+          Deno.exit(1);
+        }
+        const stateName = argv.state || argv._[2];
+        if (!stateName) {
+            console.error(style.error("❌ Please provide a state to update to using --state."));
+            Deno.exit(1);
+        }
+
+        const { issue } = await client.getIssue(issueId);
+        if (!issue) {
+            console.error(style.error(`❌ Could not find issue: ${issueId}`));
+            Deno.exit(1);
+        }
+
+        const { team } = await client.getWorkflowStates(LINEAR_TEAM_ID);
+        const state = team.states.nodes.find(s => s.name.toLowerCase() === stateName.toLowerCase());
+
+        if (!state) {
+            console.error(style.error(`❌ Could not find state: ${stateName}`));
+            Deno.exit(1);
+        }
+
+        await client.updateIssue(issue.id, state.id);
+        console.log(style.success(`✅ Successfully transitioned issue ${issue.identifier} to ${state.name}`));
+        break;
+      }
+      default: {
+        console.error(style.error(`❌ Unknown command: ${command}\n`));
+        showHelp();
+        Deno.exit(1);
+      }
+    }
+  } catch (error) {
+    console.error(style.error("❌ Error:"), error.message);
+  }
+}main();
