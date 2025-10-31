@@ -28,7 +28,6 @@ ${style.heading("COMMANDS:")}
   ${style.info("git-branch")}        Generate a git branch name from an issue.
   ${style.info("help")}              Show this help message.
   ${style.info("me")}                Display information about the current user.
-  ${style.info("open")}              Open an issue in the browser.
   ${style.info("project")}           Display detailed information about a project.
   ${style.info("projects")}          List all projects in the team.
   ${style.info("ticket")}            Display detailed information about an issue.
@@ -37,7 +36,7 @@ ${style.heading("COMMANDS:")}
 
 ${style.heading("OPTIONS:")}
   ${style.info("-i, --id=<id>")}        Specify an issue ID (e.g., "TEAM-123").
-                       ${style.dim("(For: git-branch, open, update, ticket)")}
+                       ${style.dim("(For: git-branch, update, ticket)")}
   ${style.info("-s, --state=<state>")}  The state to update the issue to.
                        ${style.dim("(For: update)")}
   ${style.info("-t, --title=<title>")}  The title for the new issue.
@@ -46,8 +45,8 @@ ${style.heading("OPTIONS:")}
                        ${style.dim("(For: git-branch)")}
   ${style.info("-n, --name=<name>")}    Specify a project name.
                        ${style.dim("(For: project)")}
-  ${style.info("-o, --open")}           Open the project in the browser.
-                       ${style.dim("(For: project)")}
+  ${style.info("-o, --open")}           Open in the browser/desktop app.
+                       ${style.dim("(For: project, ticket, create)")}
   ${style.info("-v, --verbose")}        Enable verbose output.
                        ${style.dim("(For: git-branch)")}
 
@@ -582,6 +581,7 @@ async function main() {
     switch (command) {
       case "create": {
         const title = argv.title || argv._[1];
+        const shouldOpen = argv.open;
         if (!title) {
           console.error(style.error("❌ Please provide a title for the issue using --title."));
           Deno.exit(1);
@@ -589,6 +589,12 @@ async function main() {
         const { viewer } = await client.getSelf();
         const { issueCreate } = await client.createIssue(title, LINEAR_TEAM_ID, viewer.id);
         console.log(style.success(`✅ Successfully created issue: [${issueCreate.issue.identifier}] ${issueCreate.issue.title}`));
+
+        if (shouldOpen) {
+          console.log(style.info(`🚀 Opening issue ${issueCreate.issue.identifier} in your browser...`));
+          const url = `https://linear.app/team/${LINEAR_TEAM_ID}/issue/${issueCreate.issue.identifier}`;
+          await openInBrowser(url, issueCreate.issue.identifier);
+        }
         break;
       }
       case "git-branch": {
@@ -628,29 +634,7 @@ async function main() {
         console.log(`  ${style.info("ID:")}    ${viewer.id}`);
         break;
       }
-      case "open": {
-        let issueId = argv.id || argv._[1];
 
-        if (!issueId) {
-            console.log(style.info("No issue ID provided, fetching your latest issue..."));
-            const { viewer } = await client.getSelf();
-            const issue = await client.getLatestInProgressIssue(viewer.id);
-            if (issue) {
-                issueId = issue.identifier;
-                console.log(style.info(`\nOperating on issue: ${style.bold(`[${issue.identifier}]`)} ${issue.title}\n`));
-            }
-        }
-
-        if (!issueId) {
-          console.error(style.error(`❌ Could not find an issue to operate on.`));
-          Deno.exit(1);
-        }
-
-        console.log(style.info(`🚀 Opening issue ${issueId} in your browser...`));
-        const url = `https://linear.app/team/${LINEAR_TEAM_ID}/issue/${issueId}`;
-        await openInBrowser(url, issueId);
-        break;
-      }
       case "projects": {
         const { team } = await client.getProjects(LINEAR_TEAM_ID);
         console.log(style.heading(`\n📦 Projects in your team:\n`));
@@ -666,6 +650,7 @@ async function main() {
       case "ticket": {
         const issueId = argv.id || argv._[1];
         const verbose = argv.verbose;
+        const shouldOpen = argv.open;
 
         let issue: LinearIssue | null;
         if (issueId) {
@@ -682,11 +667,17 @@ async function main() {
           Deno.exit(1);
         }
 
-        console.log(`\n${style.bold(`[${issue.identifier}]`)} ${style.heading(issue.title)}\n`);
-        console.log(`  ${style.info("Branch:")} ${issue.branchName}`);
-        console.log(`  ${style.info("State:")}  ${issue.state.name}`);
-        if (issue.project) {
-          console.log(`  ${style.info("Project:")} ${issue.project.name} (${issue.project.id})`);
+        if (shouldOpen) {
+          console.log(style.info(`🚀 Opening issue ${issue.identifier} in your browser...`));
+          const url = `https://linear.app/team/${LINEAR_TEAM_ID}/issue/${issue.identifier}`;
+          await openInBrowser(url, issue.identifier);
+        } else {
+          console.log(`\n${style.bold(`[${issue.identifier}]`)} ${style.heading(issue.title)}\n`);
+          console.log(`  ${style.info("Branch:")} ${issue.branchName}`);
+          console.log(`  ${style.info("State:")}  ${issue.state.name}`);
+          if (issue.project) {
+            console.log(`  ${style.info("Project:")} ${issue.project.name} (${issue.project.id})`);
+          }
         }
         break;
       }
