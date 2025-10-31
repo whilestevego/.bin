@@ -61,6 +61,10 @@ interface LinearIssue {
     id: string;
     name: string;
   };
+  project?: {
+    id: string;
+    name: string;
+  };
 }
 
 interface LinearTeam {
@@ -128,6 +132,10 @@ class LinearClient {
             id
             name
           }
+          project {
+            id
+            name
+          }
         }
       }
     `;
@@ -144,6 +152,10 @@ class LinearClient {
             title
             branchName
             state {
+              id
+              name
+            }
+            project {
               id
               name
             }
@@ -170,6 +182,10 @@ class LinearClient {
             title
             branchName
             state {
+              id
+              name
+            }
+            project {
               id
               name
             }
@@ -391,7 +407,8 @@ async function main() {
           console.log(style.info("✨ No assigned issues. You're all clear!"));
         } else {
           for (const issue of issues.nodes) {
-            console.log(`  ${style.bold(style.info(`[${issue.identifier}]`))} ${issue.title}`);
+            const project = issue.project ? ` ${style.dim(`(${issue.project.name})`)}` : "";
+            console.log(`  ${style.bold(style.info(`[${issue.identifier}]`))} ${issue.title}${project}`);
           }
         }
         break;
