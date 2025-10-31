@@ -24,23 +24,30 @@ ${style.heading("USAGE:")}
   ${style.info("linear <command> [options]")}
 
 ${style.heading("COMMANDS:")}
-  ${style.info("list")}              List your assigned issues.
-  ${style.info("me")}                Display information about the current user.
-  ${style.info("git-branch")}        Generate a git branch name from an issue.
-  ${style.info("open")}              Open an issue in the browser.
   ${style.info("create")}            Create a new issue.
-  ${style.info("update")}            Update an issue's state.
+  ${style.info("git-branch")}        Generate a git branch name from an issue.
   ${style.info("help")}              Show this help message.
+  ${style.info("me")}                Display information about the current user.
+  ${style.info("open")}              Open an issue in the browser.
+  ${style.info("project")}           Display detailed information about a project.
+  ${style.info("projects")}          List all projects in the team.
+  ${style.info("ticket")}            Display detailed information about an issue.
+  ${style.info("tickets")}           List your assigned issues.
+  ${style.info("update")}            Update an issue's state.
 
 ${style.heading("OPTIONS:")}
   ${style.info("-i, --id=<id>")}        Specify an issue ID (e.g., "TEAM-123").
-                       ${style.dim("(For: git-branch, open, update)")}
+                       ${style.dim("(For: git-branch, open, update, ticket)")}
   ${style.info("-s, --state=<state>")}  The state to update the issue to.
                        ${style.dim("(For: update)")}
   ${style.info("-t, --title=<title>")}  The title for the new issue.
                        ${style.dim("(For: create)")}
   ${style.info("-c, --checkout")}       Checkout the git branch.
                        ${style.dim("(For: git-branch)")}
+  ${style.info("-n, --name=<name>")}    Specify a project name.
+                       ${style.dim("(For: project)")}
+  ${style.info("-o, --open")}           Open the project in the browser.
+                       ${style.dim("(For: project)")}
   ${style.info("-v, --verbose")}        Enable verbose output.
                        ${style.dim("(For: git-branch)")}
 
@@ -235,6 +242,139 @@ class LinearClient {
     return this.request<{ teams: { nodes: LinearTeam[] } }>(query);
   }
 
+  async getProjects(teamId: string) {
+    const query = `
+      query Projects($teamId: String!) {
+        team(id: $teamId) {
+          projects {
+            nodes {
+              id
+              name
+            }
+          }
+        }
+      }
+    `;
+    return this.request<{ team: { projects: { nodes: { id: string; name: string }[] } } }>(query, { teamId });
+  }
+
+  async getProjectById(projectId: string) {
+    const query = `
+      query Project($projectId: String!) {
+        project(id: $projectId) {
+          id
+          name
+          description
+          state
+          url
+          slugId
+          progress
+          targetDate
+          startDate
+          completedAt
+          createdAt
+          updatedAt
+          lead {
+            id
+            name
+            email
+          }
+          creator {
+            id
+            name
+            email
+          }
+          members {
+            nodes {
+              id
+              name
+              email
+            }
+          }
+          issues {
+            nodes {
+              id
+              identifier
+              title
+              state {
+                name
+              }
+            }
+          }
+        }
+      }
+    `;
+    return this.request<{ project: any }>(query, { projectId });
+  }
+
+  async getProjectByName(teamId: string, projectName: string) {
+    const query = `
+      query ProjectByName($teamId: String!) {
+        team(id: $teamId) {
+          projects {
+            nodes {
+              id
+              name
+              description
+              state
+              url
+              slugId
+              progress
+              targetDate
+              startDate
+              completedAt
+              createdAt
+              updatedAt
+              lead {
+                id
+                name
+                email
+              }
+              creator {
+                id
+                name
+                email
+              }
+              members {
+                nodes {
+                  id
+                  name
+                  email
+                }
+              }
+              issues {
+                nodes {
+                  id
+                  identifier
+                  title
+                  state {
+                    name
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    const result = await this.request<{ team: { projects: { nodes: any[] } } }>(query, { teamId });
+    const project = result.team.projects.nodes.find(p => p.name.toLowerCase() === projectName.toLowerCase());
+    return project ? { project } : { project: null };
+  }
+
+  async getTeamInfo(teamId: string) {
+    const query = `
+      query Team($teamId: String!) {
+        team(id: $teamId) {
+          id
+          name
+          key
+        }
+      }
+    `;
+    return this.request<{ team: { id: string; name: string; key: string } }>(query, { teamId });
+  }
+
   async getWorkflowStates(teamId: string) {
     const query = `
       query WorkflowStates($teamId: String!) {
@@ -360,16 +500,57 @@ async function openInBrowser(webUrl: string, issueId: string): Promise<void> {
         }
     }
 }
+
+async function openProjectInBrowser(webUrl: string, projectName: string, projectId: string): Promise<void> {
+    const desktopUrl = `linear://project/${projectId}/overview`;
+
+    let command: string;
+    let desktopArgs: string[];
+    let webArgs: string[];
+
+    switch (Deno.build.os) {
+        case "darwin":
+            command = "open";
+            desktopArgs = [desktopUrl];
+            webArgs = [webUrl];
+            break;
+        case "windows":
+            command = "cmd";
+            desktopArgs = ["/c", "start", desktopUrl];
+            webArgs = ["/c", "start", webUrl];
+            break;
+        default:
+            command = "xdg-open";
+            desktopArgs = [desktopUrl];
+            webArgs = [webUrl];
+            break;
+    }
+
+    const p = new Deno.Command(command, { args: desktopArgs });
+    const { code } = await p.output();
+
+    if (code !== 0) {
+        console.warn(style.warning("Could not open in Linear desktop app, falling back to browser."));
+        const webP = new Deno.Command(command, { args: webArgs });
+        const { code: webCode, stderr: webStderr } = await webP.output();
+        if (webCode !== 0) {
+            console.error(`${style.error("❌ Error opening in browser:")} ${new TextDecoder().decode(webStderr).trim()}`);
+        }
+    }
+}
+
 async function main() {
   const argv = parse(Deno.args, {
-    boolean: ["checkout", "verbose"],
-    string: ["id", "state", "title"],
+    boolean: ["checkout", "verbose", "open"],
+    string: ["id", "state", "title", "name"],
     alias: {
       i: "id",
       s: "state",
       t: "title",
       c: "checkout",
       v: "verbose",
+      n: "name",
+      o: "open",
     },
   });
 
@@ -399,28 +580,6 @@ async function main() {
 
   try {
     switch (command) {
-      case "list": {
-        const { viewer } = await client.getSelf();
-        const { issues } = await client.getAssignedIssues(viewer.id);
-        console.log(style.heading(`\n🚀 Assigned issues for ${viewer.name}:\n`));
-        if (issues.nodes.length === 0) {
-          console.log(style.info("✨ No assigned issues. You're all clear!"));
-        } else {
-          for (const issue of issues.nodes) {
-            const project = issue.project ? ` ${style.dim(`(${issue.project.name})`)}` : "";
-            console.log(`  ${style.bold(style.info(`[${issue.identifier}]`))} ${issue.title}${project}`);
-          }
-        }
-        break;
-      }
-      case "me": {
-        const { viewer } = await client.getSelf();
-        console.log(`\n${style.bold("👤 Current User")}\n`);
-        console.log(`  ${style.info("Name:")}  ${viewer.name}`);
-        console.log(`  ${style.info("Email:")} ${viewer.email}`);
-        console.log(`  ${style.info("ID:")}    ${viewer.id}`);
-        break;
-      }
       case "create": {
         const title = argv.title || argv._[1];
         if (!title) {
@@ -461,6 +620,14 @@ async function main() {
         }
         break;
       }
+      case "me": {
+        const { viewer } = await client.getSelf();
+        console.log(`\n${style.bold("👤 Current User")}\n`);
+        console.log(`  ${style.info("Name:")}  ${viewer.name}`);
+        console.log(`  ${style.info("Email:")} ${viewer.email}`);
+        console.log(`  ${style.info("ID:")}    ${viewer.id}`);
+        break;
+      }
       case "open": {
         let issueId = argv.id || argv._[1];
 
@@ -482,6 +649,59 @@ async function main() {
         console.log(style.info(`🚀 Opening issue ${issueId} in your browser...`));
         const url = `https://linear.app/team/${LINEAR_TEAM_ID}/issue/${issueId}`;
         await openInBrowser(url, issueId);
+        break;
+      }
+      case "projects": {
+        const { team } = await client.getProjects(LINEAR_TEAM_ID);
+        console.log(style.heading(`\n📦 Projects in your team:\n`));
+        if (team.projects.nodes.length === 0) {
+          console.log(style.info("✨ No projects found in this team."));
+        } else {
+          for (const project of team.projects.nodes) {
+            console.log(`  ${style.bold(style.info(`[${project.id}]`))} ${project.name}`);
+          }
+        }
+        break;
+      }
+      case "ticket": {
+        const issueId = argv.id || argv._[1];
+        const verbose = argv.verbose;
+
+        let issue: LinearIssue | null;
+        if (issueId) {
+            const issueResult = await client.getIssue(issueId);
+            issue = issueResult.issue;
+        } else {
+            if (verbose) console.log(style.info("No issue ID provided, fetching your latest issue..."));
+            const { viewer } = await client.getSelf();
+            issue = await client.getLatestInProgressIssue(viewer.id);
+        }
+
+        if (!issue) {
+          console.error(style.error(`❌ Could not find an issue to operate on.`));
+          Deno.exit(1);
+        }
+
+        console.log(`\n${style.bold(`[${issue.identifier}]`)} ${style.heading(issue.title)}\n`);
+        console.log(`  ${style.info("Branch:")} ${issue.branchName}`);
+        console.log(`  ${style.info("State:")}  ${issue.state.name}`);
+        if (issue.project) {
+          console.log(`  ${style.info("Project:")} ${issue.project.name} (${issue.project.id})`);
+        }
+        break;
+      }
+      case "tickets": {
+        const { viewer } = await client.getSelf();
+        const { issues } = await client.getAssignedIssues(viewer.id);
+        console.log(style.heading(`\n🚀 Assigned issues for ${viewer.name}:\n`));
+        if (issues.nodes.length === 0) {
+          console.log(style.info("✨ No assigned issues. You're all clear!"));
+        } else {
+          for (const issue of issues.nodes) {
+            const project = issue.project ? ` ${style.dim(`(${issue.project.name} - ${issue.project.id})`)}` : "";
+            console.log(`  ${style.bold(style.info(`[${issue.identifier}]`))} ${issue.title}${project}`);
+          }
+        }
         break;
       }
       case "update": {
@@ -514,6 +734,79 @@ async function main() {
         console.log(style.success(`✅ Successfully transitioned issue ${issue.identifier} to ${state.name}`));
         break;
       }
+      case "project": {
+        const projectName = argv.name || argv._[1];
+        const shouldOpen = argv.open;
+
+        let project: any = null;
+
+        if (projectName) {
+          // Get project by name
+          const result = await client.getProjectByName(LINEAR_TEAM_ID, projectName);
+          project = result.project;
+        } else {
+          // Get project from current ticket
+          const { viewer } = await client.getSelf();
+          const issue = await client.getLatestInProgressIssue(viewer.id);
+          if (issue && issue.project) {
+            const result = await client.getProjectById(issue.project.id);
+            project = result.project;
+          }
+        }
+
+        if (!project) {
+          if (projectName) {
+            console.error(style.error(`❌ Could not find project: ${projectName}`));
+          } else {
+            console.error(style.error(`❌ Could not find project for current ticket or no current ticket found.`));
+          }
+          Deno.exit(1);
+        }
+
+        if (shouldOpen) {
+          console.log(style.info(`🚀 Opening project ${project.name} in your browser...`));
+          const { team } = await client.getTeamInfo(LINEAR_TEAM_ID);
+          const projectUrl = `https://linear.app/${team.key}/project/${project.slugId}/overview`;
+          await openProjectInBrowser(projectUrl, project.name, project.id);
+        } else {
+          // Display project information
+          console.log(`\n${style.bold("📦 Project Details")}\n`);
+          console.log(`  ${style.info("Name:")}        ${project.name}`);
+          console.log(`  ${style.info("ID:")}          ${project.id}`);
+          if (project.description) {
+            console.log(`  ${style.info("Description:")} ${project.description}`);
+          }
+          console.log(`  ${style.info("State:")}       ${project.state}`);
+          console.log(`  ${style.info("Progress:")}    ${Math.round(project.progress * 100)}%`);
+
+          if (project.lead) {
+            console.log(`  ${style.info("Lead:")}        ${project.lead.name} (${project.lead.email})`);
+          }
+
+          if (project.targetDate) {
+            const targetDate = new Date(project.targetDate).toLocaleDateString();
+            console.log(`  ${style.info("Target Date:")} ${targetDate}`);
+          }
+
+          if (project.members && project.members.nodes.length > 0) {
+            console.log(`  ${style.info("Members:")}     ${project.members.nodes.length} member(s)`);
+            for (const member of project.members.nodes) {
+              console.log(`                   - ${member.name} (${member.email})`);
+            }
+          }
+
+          if (project.issues && project.issues.nodes.length > 0) {
+            console.log(`\n  ${style.info("Recent Issues:")} ${project.issues.nodes.length} issue(s)`);
+            for (const issue of project.issues.nodes.slice(0, 5)) {
+              console.log(`    ${style.bold(style.info(`[${issue.identifier}]`))} ${issue.title} (${issue.state.name})`);
+            }
+            if (project.issues.nodes.length > 5) {
+              console.log(`    ... and ${project.issues.nodes.length - 5} more`);
+            }
+          }
+        }
+        break;
+      }
       default: {
         console.error(style.error(`❌ Unknown command: ${command}\n`));
         showHelp();
@@ -521,7 +814,7 @@ async function main() {
       }
     }
   } catch (error) {
-    console.error(style.error("❌ Error:"), error.message);
+    console.error(style.error("❌ Error:"), error instanceof Error ? error.message : String(error));
   }
 }
 
